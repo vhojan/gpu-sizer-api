@@ -67,4 +67,30 @@ def estimate_gpu_requirement(model, users: int, latency: int, gpu_catalog: list)
             ]
         }
 
+    # Step 4: Fallback to non-NVLink multi-GPU setups (less optimal, but acceptable)
+    non_nvlink_candidates = [
+        gpu for gpu in suitable_gpus
+        if required_gpus * gpu["VRAM (GB)"] >= model.VRAM_Required_GB
+    ]
+
+    if non_nvlink_candidates:
+        sorted_fallback = sorted(non_nvlink_candidates, key=lambda g: (g["VRAM (GB)"], -g["TFLOPs (FP16)"]))
+        best_gpu = sorted_fallback[0]
+        alternatives = sorted_fallback[1:5]
+        return {
+            "recommendation": {
+                "gpu": best_gpu["GPU Type"],
+                "quantity": required_gpus,
+                "gpu_memory": model.VRAM_Required_GB
+            },
+            "alternatives": [
+                {
+                    "gpu": gpu["GPU Type"],
+                    "quantity": required_gpus,
+                    "gpu_memory": model.VRAM_Required_GB
+                } for gpu in alternatives
+            ]
+        }
+
+    # No viable GPU found
     return {"recommendation": None, "alternatives": []}
