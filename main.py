@@ -49,44 +49,44 @@ with open("data/gpu_catalog.json") as f:
 # Core logic
 def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     base_latency = model.Base_Latency_s
-    required_latency = latency / 1000  # convert ms to s
+    required_latency = latency / 1000  # ms to seconds
 
     if required_latency < base_latency:
         raise HTTPException(status_code=400, detail="Requested latency is lower than model base latency.")
 
-    # Estimate concurrency per GPU
+    # Calculate concurrency
     parallelism = max(1, math.floor(required_latency / base_latency))
-
-    required_gpus = math.ceil(users / parallelism)
+    concurrent_per_gpu = parallelism
+    required_gpus = math.ceil(users / concurrent_per_gpu)
     required_vram_per_gpu = model.VRAM_Required_GB * parallelism
 
-# Filter GPUs that can actually handle the parallel users based on VRAM
-suitable_gpus = [
-    gpu for gpu in gpu_catalog
-    if gpu["VRAM (GB)"] >= required_vram_per_gpu
-]
+    # Filter suitable GPUs
+    suitable_gpus = [
+        gpu for gpu in gpu_catalog
+        if gpu["VRAM (GB)"] >= required_vram_per_gpu
+    ]
 
     if not suitable_gpus:
         return {"recommendation": None}
 
-sorted_gpus = sorted(suitable_gpus, key=lambda x: x["VRAM (GB)"])
-best_gpu = sorted_gpus[0]
+    sorted_gpus = sorted(suitable_gpus, key=lambda x: x["VRAM (GB)"])
+    best_gpu = sorted_gpus[0]
 
-return {
-    "recommendation": {
-        "gpu": best_gpu["GPU Type"],
-        "quantity": required_gpus,
-        "gpu_memory": required_vram_per_gpu
-    },
-    "alternatives": [
-        {
-            "gpu": gpu["GPU Type"],
+    return {
+        "recommendation": {
+            "gpu": best_gpu["GPU Type"],
             "quantity": required_gpus,
             "gpu_memory": required_vram_per_gpu
-        }
-        for gpu in sorted_gpus[1:5]
-    ]
-}
+        },
+        "alternatives": [
+            {
+                "gpu": gpu["GPU Type"],
+                "quantity": required_gpus,
+                "gpu_memory": required_vram_per_gpu
+            }
+            for gpu in sorted_gpus[1:5]
+        ]
+    }
 
 @app.get("/models")
 def get_models():
