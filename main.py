@@ -77,16 +77,16 @@ def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     best_gpu = sorted_gpus[0]
 
     return {
-        "recommendation": {
-            "gpu": best_gpu["GPU Type"],
-            "quantity": required_gpus,
-            "gpu_memory": model.VRAM_Required_GB * required_gpus
+       "recommendation": {
+        "gpu": top_gpu["GPU Type"],
+        "quantity": required_gpus,
+        "gpu_memory": model.VRAM_Required_GB  # ← Correct: per GPU, not multiplied
         },
         "alternatives": [
             {
                 "gpu": gpu["GPU Type"],
                 "quantity": required_gpus,
-                "gpu_memory": model.VRAM_Required_GB * required_gpus
+                "gpu_memory": model.VRAM_Required_GB
             }
             for gpu in sorted_gpus[1:5]
         ]
