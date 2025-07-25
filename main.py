@@ -49,52 +49,69 @@ with open("data/gpu_catalog.json") as f:
 # Core logic
 def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     base_latency = model.Base_Latency_s
-    required_latency = latency / 1000  # convert ms to seconds
+    required_latency = latency / 1000  # ms to s
 
     if required_latency < base_latency:
         raise HTTPException(status_code=400, detail="Requested latency is lower than model base latency.")
 
-    # Estimate concurrency
+    # Determine concurrency and required GPU count
     parallelism = max(1, math.floor(required_latency / base_latency))
     concurrent_per_gpu = parallelism
-    total_concurrency_required = users
-    total_inferences_needed = math.ceil(total_concurrency_required / concurrent_per_gpu)
+    required_gpus = math.ceil(users / concurrent_per_gpu)
 
-    # STEP 1: Prefer a single GPU solution
+    # Try single-GPU candidates first (preferred)
     single_gpu_candidates = [
         gpu for gpu in gpu_catalog
         if gpu["VRAM (GB)"] >= model.VRAM_Required_GB
     ]
-    if not single_gpu_candidates:
-        raise HTTPException(status_code=400, detail="No single GPU has enough memory to run this model.")
 
-    # Choose the one with the smallest VRAM that satisfies the requirement
-    best_single_gpu = sorted(single_gpu_candidates, key=lambda g: g["VRAM (GB)"])[0]
-
-    # STEP 2: Optional NVLink-enabled multi-GPU alternatives
-    nvlink_gpus = [
-        gpu for gpu in gpu_catalog
-        if gpu["NVLink"] is True and
-           gpu["VRAM (GB)"] * 2 >= model.VRAM_Required_GB and
-           int(gpu.get("Max NVLink GPUs", 2)) >= 2
-    ]
-    multi_gpu_alternatives = [
-        {
-            "gpu": gpu["GPU Type"],
-            "quantity": 2,
-            "gpu_memory": gpu["VRAM (GB)"],
-            "note": "Requires NVLink"
+    if single_gpu_candidates:
+        sorted_single = sorted(single_gpu_candidates, key=lambda x: x["VRAM (GB)"])
+        best = sorted_single[0]
+        return {
+            "recommendation": {
+                "gpu": best["GPU Type"],
+                "quantity": 1,
+                "gpu_memory": model.VRAM_Required_GB
+            },
+            "alternatives": [
+                {
+                    "gpu": gpu["GPU Type"],
+                    "quantity": 1,
+                    "gpu_memory": model.VRAM_Required_GB
+                }
+                for gpu in sorted_single[1:5]
+            ]
         }
-        for gpu in nvlink_gpus
+
+    # Else, try multi-GPU with NVLink
+    multi_gpu_candidates = [
+        gpu for gpu in gpu_catalog
+        if gpu["VRAM (GB)"] * int(gpu.get("Max NVLink GPUs", 0)) >= model.VRAM_Required_GB and
+        gpu.get("NVLink") is True and
+        int(gpu.get("Max NVLink GPUs", 0)) >= required_gpus
     ]
+
+    if not multi_gpu_candidates:
+        raise HTTPException(status_code=400, detail="No suitable GPUs found.")
+
+    sorted_multi = sorted(multi_gpu_candidates, key=lambda x: x["VRAM (GB)"])
+    top = sorted_multi[0]
 
     return {
         "recommendation": {
-            "gpu": best_single_gpu["GPU Type"],
-            "quantity": 1,
+            "gpu": top["GPU Type"],
+            "quantity": required_gpus,
             "gpu_memory": model.VRAM_Required_GB
         },
-        "alternatives": multi_gpu_alternatives
+        "alternatives": [
+            {
+                "gpu": gpu["GPU Type"],
+                "quantity": required_gpus,
+                "gpu_memory": model.VRAM_Required_GB
+            }
+            for gpu in sorted_multi[1:5]
+        ]
     }
 
 @app.get("/models")
