@@ -9,7 +9,10 @@ app = FastAPI()
 # Enable CORS for local and hosted frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all during dev; restrict in prod
+    allow_origins=[
+        "http://localhost:5173",  # Local dev frontend
+        "https://gpu-sizer-ui.onrender.com"  # Deployed frontend
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
