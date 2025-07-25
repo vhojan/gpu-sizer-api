@@ -13,10 +13,7 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://gpu-sizer-ui.onrender.com"  # optional: your deployed frontend
-    ],
+    allow_origins=["*"],  # Temporarily allow all origins (for dev)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
