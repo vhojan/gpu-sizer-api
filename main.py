@@ -54,37 +54,44 @@ def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     if required_latency < base_latency:
         raise HTTPException(status_code=400, detail="Requested latency is lower than model base latency.")
 
-    # Calculate concurrency
     parallelism = max(1, math.floor(required_latency / base_latency))
     concurrent_per_gpu = parallelism
-    required_gpus = math.ceil(users / concurrent_per_gpu)
-    required_vram_per_gpu = model.VRAM_Required_GB * parallelism
+    required_throughput = users / concurrent_per_gpu
 
-    # Filter suitable GPUs
-    suitable_gpus = [
+    # Filter for GPUs that can run the model on a single card
+    single_gpu_candidates = [
         gpu for gpu in gpu_catalog
-        if gpu["VRAM (GB)"] >= required_vram_per_gpu
+        if gpu["VRAM (GB)"] >= model.VRAM_Required_GB
     ]
 
-    if not suitable_gpus:
-        return {"recommendation": None}
+    if not single_gpu_candidates:
+        raise HTTPException(status_code=400, detail="No GPU found with enough memory to run this model.")
 
-    sorted_gpus = sorted(suitable_gpus, key=lambda x: x["VRAM (GB)"])
-    best_gpu = sorted_gpus[0]
+    # Sort single-GPU candidates by VRAM (or by cost metric if available)
+    best_single_gpu = sorted(single_gpu_candidates, key=lambda g: g["VRAM (GB)"])[0]
 
+    # Now check if a multi-GPU setup is needed and NVLink is supported
+    multi_gpu_options = [
+        gpu for gpu in gpu_catalog
+        if gpu["VRAM (GB)"] * 2 >= model.VRAM_Required_GB  # crude check: total VRAM would fit
+        and gpu.get("NVLink", False)
+    ]
+
+    # Return the best single-GPU setup (default path)
     return {
         "recommendation": {
-            "gpu": best_gpu["GPU Type"],
-            "quantity": required_gpus,
-            "gpu_memory": required_vram_per_gpu
+            "gpu": best_single_gpu["GPU Type"],
+            "quantity": 1,
+            "gpu_memory": model.VRAM_Required_GB
         },
         "alternatives": [
             {
                 "gpu": gpu["GPU Type"],
-                "quantity": required_gpus,
-                "gpu_memory": required_vram_per_gpu
+                "quantity": 2,
+                "gpu_memory": model.VRAM_Required_GB,
+                "note": "Requires NVLink"
             }
-            for gpu in sorted_gpus[1:5]
+            for gpu in multi_gpu_options
         ]
     }
 
