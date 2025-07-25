@@ -49,50 +49,52 @@ with open("data/gpu_catalog.json") as f:
 # Core logic
 def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     base_latency = model.Base_Latency_s
-    required_latency = latency / 1000  # ms to seconds
+    required_latency = latency / 1000  # convert ms to seconds
 
     if required_latency < base_latency:
         raise HTTPException(status_code=400, detail="Requested latency is lower than model base latency.")
 
+    # Estimate concurrency
     parallelism = max(1, math.floor(required_latency / base_latency))
     concurrent_per_gpu = parallelism
-    required_throughput = users / concurrent_per_gpu
+    total_concurrency_required = users
+    total_inferences_needed = math.ceil(total_concurrency_required / concurrent_per_gpu)
 
-    # Filter for GPUs that can run the model on a single card
+    # STEP 1: Prefer a single GPU solution
     single_gpu_candidates = [
         gpu for gpu in gpu_catalog
         if gpu["VRAM (GB)"] >= model.VRAM_Required_GB
     ]
-
     if not single_gpu_candidates:
-        raise HTTPException(status_code=400, detail="No GPU found with enough memory to run this model.")
+        raise HTTPException(status_code=400, detail="No single GPU has enough memory to run this model.")
 
-    # Sort single-GPU candidates by VRAM (or by cost metric if available)
+    # Choose the one with the smallest VRAM that satisfies the requirement
     best_single_gpu = sorted(single_gpu_candidates, key=lambda g: g["VRAM (GB)"])[0]
 
-    # Now check if a multi-GPU setup is needed and NVLink is supported
-    multi_gpu_options = [
+    # STEP 2: Optional NVLink-enabled multi-GPU alternatives
+    nvlink_gpus = [
         gpu for gpu in gpu_catalog
-        if gpu["VRAM (GB)"] * 2 >= model.VRAM_Required_GB  # crude check: total VRAM would fit
-        and gpu.get("NVLink", False)
+        if gpu["NVLink"] is True and
+           gpu["VRAM (GB)"] * 2 >= model.VRAM_Required_GB and
+           int(gpu.get("Max NVLink GPUs", 2)) >= 2
+    ]
+    multi_gpu_alternatives = [
+        {
+            "gpu": gpu["GPU Type"],
+            "quantity": 2,
+            "gpu_memory": gpu["VRAM (GB)"],
+            "note": "Requires NVLink"
+        }
+        for gpu in nvlink_gpus
     ]
 
-    # Return the best single-GPU setup (default path)
     return {
         "recommendation": {
             "gpu": best_single_gpu["GPU Type"],
             "quantity": 1,
             "gpu_memory": model.VRAM_Required_GB
         },
-        "alternatives": [
-            {
-                "gpu": gpu["GPU Type"],
-                "quantity": 2,
-                "gpu_memory": model.VRAM_Required_GB,
-                "note": "Requires NVLink"
-            }
-            for gpu in multi_gpu_options
-        ]
+        "alternatives": multi_gpu_alternatives
     }
 
 @app.get("/models")
