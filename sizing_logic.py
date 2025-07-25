@@ -13,22 +13,19 @@ def estimate_gpu_requirement(model, users: int, latency: int, gpu_catalog: list)
     concurrent_per_gpu = parallelism
     required_gpus = math.ceil(users / concurrent_per_gpu)
 
-    # Step 1: Filter GPUs that meet minimum VRAM requirement
-    suitable_gpus = [
-        gpu for gpu in gpu_catalog
-        if gpu["VRAM (GB)"] >= model.VRAM_Required_GB
-    ]
+    # Step 1: Filter GPUs that meet VRAM requirement
+    suitable_gpus = [gpu for gpu in gpu_catalog if gpu["VRAM (GB)"] >= model.VRAM_Required_GB]
 
     if not suitable_gpus:
         return {"recommendation": None, "alternatives": []}
 
-    # Step 2: Filter for single-GPU solutions first
-    single_gpu_candidates = [gpu for gpu in suitable_gpus if model.VRAM_Required_GB <= gpu["VRAM (GB)"]]
+    # Step 2: Try to find single-GPU solution
+    single_gpu_candidates = [gpu for gpu in suitable_gpus]
+    sorted_single = sorted(single_gpu_candidates, key=lambda g: g["VRAM (GB)"])
 
-    if single_gpu_candidates:
-        sorted_single = sorted(single_gpu_candidates, key=lambda g: g["TFLOPs (FP16)"], reverse=True)
+    if sorted_single:
         best_gpu = sorted_single[0]
-        alternatives = sorted_single[1:5]
+        alternatives = sorted_single[1:6]  # show up to 5 alternatives
         return {
             "recommendation": {
                 "gpu": best_gpu["GPU Type"],
@@ -44,16 +41,18 @@ def estimate_gpu_requirement(model, users: int, latency: int, gpu_catalog: list)
             ]
         }
 
-    # Step 3: Fall back to multi-GPU only if NVLink is supported
+    # Step 3: Fallback to NVLink multi-GPU only if needed
     nvlink_multi_gpu_candidates = [
-        gpu for gpu in suitable_gpus
-        if gpu.get("NVLink", False) and required_gpus <= int(gpu.get("Max NVLink GPUs", "1"))
+        gpu for gpu in gpu_catalog
+        if gpu.get("NVLink", False)
+        and gpu["VRAM (GB)"] >= model.VRAM_Required_GB
+        and required_gpus <= int(gpu.get("Max NVLink GPUs", "1"))
     ]
+    sorted_nvlink = sorted(nvlink_multi_gpu_candidates, key=lambda g: g["VRAM (GB)"])
 
-    if nvlink_multi_gpu_candidates:
-        sorted_nvlink = sorted(nvlink_multi_gpu_candidates, key=lambda g: g["TFLOPs (FP16)"], reverse=True)
+    if sorted_nvlink:
         best_gpu = sorted_nvlink[0]
-        alternatives = sorted_nvlink[1:5]
+        alternatives = sorted_nvlink[1:6]
         return {
             "recommendation": {
                 "gpu": best_gpu["GPU Type"],
@@ -69,5 +68,4 @@ def estimate_gpu_requirement(model, users: int, latency: int, gpu_catalog: list)
             ]
         }
 
-    # Step 4: No viable solution
     return {"recommendation": None, "alternatives": []}
