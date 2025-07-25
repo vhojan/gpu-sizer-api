@@ -7,29 +7,35 @@ on:
   workflow_dispatch:
 
 jobs:
-  convert:
+  convert-and-commit:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: 3.10
+          python-version: '3.10'
 
-      - name: Install pandas
+      - name: Install dependencies
         run: pip install pandas
 
-      - name: Run conversion script
-        run: python scripts/convert_csv_to_json.py
-
-      - name: Commit and push changes
+      - name: Convert CSV to JSON
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          python -c "
+import pandas as pd
+df = pd.read_csv('data/model_catalog.csv')
+df.to_json('data/model_catalog.json', orient='records', indent=2)
+df = pd.read_csv('data/gpu_catalog.csv')
+df.to_json('data/gpu_catalog.json', orient='records', indent=2)
+"
+
+      - name: Commit and push JSON files
+        run: |
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
           git add data/*.json
-          git commit -m "Auto-convert CSV to JSON"
+          git commit -m 'Auto-convert CSV to JSON' || echo 'No changes to commit'
           git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
