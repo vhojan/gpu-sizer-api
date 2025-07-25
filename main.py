@@ -68,16 +68,15 @@ def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     if not suitable_gpus:
         return {"recommendation": None}
 
-    # Sort GPUs by TFLOPs
-    #sorted_gpus = sorted(suitable_gpus, key=lambda x: x["TFLOPs (FP16)"], reverse=True)
+    # Sort GPUs by VRAM (cheapest first assumption)
     sorted_gpus = sorted(suitable_gpus, key=lambda x: x["VRAM (GB)"])
     best_gpu = sorted_gpus[0]
 
     return {
-       "recommendation": {
-        "gpu": top_gpu["GPU Type"],
-        "quantity": required_gpus,
-        "gpu_memory": model.VRAM_Required_GB  # ← Correct: per GPU, not multiplied
+        "recommendation": {
+            "gpu": best_gpu["GPU Type"],
+            "quantity": required_gpus,
+            "gpu_memory": model.VRAM_Required_GB
         },
         "alternatives": [
             {
