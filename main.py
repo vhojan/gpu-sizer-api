@@ -64,6 +64,7 @@ def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
 
     sorted_gpus = sorted(suitable_gpus, key=lambda x: x["TFLOPs (FP16)"], reverse=True)
     best_gpu = sorted_gpus[0]
+    top_gpu = suitable_gpus[0]  # Now safe because we checked it's not empty
 
     return {
     "recommendation": {
