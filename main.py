@@ -52,14 +52,13 @@ with open("data/gpu_catalog.json") as f:
 # Core logic
 def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     base_latency = model.Base_Latency_s
-    required_latency = latency / 1000  # convert ms to s
+    required_latency = latency / 1000  # convert ms to seconds
 
     if required_latency < base_latency:
         raise HTTPException(status_code=400, detail="Requested latency is lower than model base latency.")
 
-    parallelism = math.floor(required_latency / base_latency)
-    concurrent_per_gpu = parallelism if parallelism > 0 else 1
-    required_gpus = math.ceil(users / concurrent_per_gpu)
+    parallelism = max(1, math.floor(required_latency / base_latency))
+    required_gpus = math.ceil(users / parallelism)
 
     suitable_gpus = [
         gpu for gpu in gpu_catalog
@@ -69,25 +68,25 @@ def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     if not suitable_gpus:
         return {"recommendation": None}
 
+    # Sort by performance (descending)
     sorted_gpus = sorted(suitable_gpus, key=lambda x: x["TFLOPs (FP16)"], reverse=True)
-    best_gpu = sorted_gpus[0]
-    top_gpu = suitable_gpus[0]  # Now safe because we checked it's not empty
+    top_gpu = sorted_gpus[0]
 
     return {
-    "recommendation": {
-        "gpu": top_gpu["GPU Type"],
-        "quantity": top_gpu["Quantity"],
-        "gpu_memory": top_gpu["Memory Needed"],
-    },
-    "alternatives": [
-        {
-            "gpu": gpu["GPU Type"],
-            "quantity": gpu["Quantity"],
-            "gpu_memory": gpu["Memory Needed"]
-        }
-        for gpu in suitable_gpus[1:5]  # Limit to top 4 alternatives
-    ]
-}
+        "recommendation": {
+            "gpu": top_gpu["GPU Type"],
+            "quantity": required_gpus,
+            "gpu_memory": model.VRAM_Required_GB * required_gpus,
+        },
+        "alternatives": [
+            {
+                "gpu": gpu["GPU Type"],
+                "quantity": required_gpus,
+                "gpu_memory": model.VRAM_Required_GB * required_gpus,
+            }
+            for gpu in sorted_gpus[1:5]
+        ]
+    }
 
 @app.get("/models")
 def get_models():
