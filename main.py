@@ -72,7 +72,8 @@ def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
         return {"recommendation": None}
 
     # Sort GPUs by TFLOPs
-    sorted_gpus = sorted(suitable_gpus, key=lambda x: x["TFLOPs (FP16)"], reverse=True)
+    #sorted_gpus = sorted(suitable_gpus, key=lambda x: x["TFLOPs (FP16)"], reverse=True)
+    sorted_gpus = sorted(suitable_gpus, key=lambda x: x["VRAM (GB)"])
     best_gpu = sorted_gpus[0]
 
     return {
