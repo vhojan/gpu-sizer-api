@@ -57,37 +57,36 @@ def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     # Estimate concurrency per GPU
     parallelism = max(1, math.floor(required_latency / base_latency))
 
-    # Filter GPUs that can handle that many parallel users (VRAM constraint)
-    suitable_gpus = [
-        gpu for gpu in gpu_catalog
-        if gpu["VRAM (GB)"] >= model.VRAM_Required_GB * parallelism
-    ]
+    required_gpus = math.ceil(users / parallelism)
+    required_vram_per_gpu = model.VRAM_Required_GB * parallelism
+
+# Filter GPUs that can actually handle the parallel users based on VRAM
+suitable_gpus = [
+    gpu for gpu in gpu_catalog
+    if gpu["VRAM (GB)"] >= required_vram_per_gpu
+]
 
     if not suitable_gpus:
         return {"recommendation": None}
 
-    # Sort by VRAM (cheapest first assumption)
-    sorted_gpus = sorted(suitable_gpus, key=lambda x: x["VRAM (GB)"])
-    best_gpu = sorted_gpus[0]
+sorted_gpus = sorted(suitable_gpus, key=lambda x: x["VRAM (GB)"])
+best_gpu = sorted_gpus[0]
 
-    # Calculate GPU count
-    required_gpus = math.ceil(users / parallelism)
-
-    return {
-        "recommendation": {
-            "gpu": best_gpu["GPU Type"],
+return {
+    "recommendation": {
+        "gpu": best_gpu["GPU Type"],
+        "quantity": required_gpus,
+        "gpu_memory": required_vram_per_gpu
+    },
+    "alternatives": [
+        {
+            "gpu": gpu["GPU Type"],
             "quantity": required_gpus,
-            "gpu_memory": model.VRAM_Required_GB * parallelism
-        },
-        "alternatives": [
-            {
-                "gpu": gpu["GPU Type"],
-                "quantity": required_gpus,
-                "gpu_memory": model.VRAM_Required_GB * parallelism
-            }
-            for gpu in sorted_gpus[1:5]
-        ]
-    }
+            "gpu_memory": required_vram_per_gpu
+        }
+        for gpu in sorted_gpus[1:5]
+    ]
+}
 
 @app.get("/models")
 def get_models():
