@@ -6,10 +6,14 @@ import json
 
 app = FastAPI()
 
-# Allow all CORS origins (for local dev + frontend on different domain)
+origins = [
+    "http://localhost:5173",
+    "https://gpu-sizer-ui.onrender.com",  # if deployed frontend
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,  # instead of ["*"]
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
