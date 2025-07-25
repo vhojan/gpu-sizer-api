@@ -45,7 +45,7 @@ with open("data/gpu_catalog.json") as f:
 # Core logic
 def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     base_latency = model.Base_Latency_s
-    required_latency = latency / 1000  # convert ms to seconds
+    required_latency = latency / 1000  # convert ms to s
 
     if required_latency < base_latency:
         raise HTTPException(status_code=400, detail="Requested latency is lower than model base latency.")
@@ -54,22 +54,20 @@ def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     concurrent_per_gpu = parallelism if parallelism > 0 else 1
     required_gpus = math.ceil(users / concurrent_per_gpu)
 
-    # Filter GPUs that have enough memory
-   suitable_gpus = [
-    gpu for gpu in gpu_catalog
-    if gpu["VRAM (GB)"] >= model.VRAM_Required_GB
+    suitable_gpus = [
+        gpu for gpu in gpu_catalog
+        if gpu["VRAM (GB)"] >= model.VRAM_Required_GB
     ]
 
     if not suitable_gpus:
         return {"recommendation": None}
 
-    # Pick the best GPU based on compute performance
     sorted_gpus = sorted(suitable_gpus, key=lambda x: x["TFLOPs (FP16)"], reverse=True)
     best_gpu = sorted_gpus[0]
 
     return {
         "recommendation": {
-            "gpu_name": best_gpu["Name"],
+            "gpu_name": best_gpu["GPU Type"],
             "required_gpus": required_gpus,
             "required_gpu_memory_gb": model.VRAM_Required_GB
         }
