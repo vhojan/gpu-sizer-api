@@ -55,9 +55,9 @@ def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     required_gpus = math.ceil(users / concurrent_per_gpu)
 
     # Filter GPUs that have enough memory
-    suitable_gpus = [
-        gpu for gpu in gpu_catalog
-        if gpu["Memory (GB)"] >= model.VRAM_Required_GB
+   suitable_gpus = [
+    gpu for gpu in gpu_catalog
+    if gpu["VRAM (GB)"] >= model.VRAM_Required_GB
     ]
 
     if not suitable_gpus:
