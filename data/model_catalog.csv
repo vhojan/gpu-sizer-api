@@ -1,0 +1,19 @@
+Model,Size,VRAM Required (GB),Base Latency (s),Parameters,"Weights Size (FP16, GB)",Architecture,Intended Use
+Mistral-7B,7B,20,0.9,7B,13.0,Decoder-only,General
+LLaMA2-13B,13B,40,1.2,13B,24.2,Decoder-only,General
+LLaMA2-70B,70B,80,2.5,70B,130.4,Decoder-only,General
+LLaMA 3-400B (Maverick),400B,320,3.5,400B,745.1,Decoder-only,General
+GPT-3.5,175B,200,2.8,175B,326.0,Unknown,General
+Claude 3 Opus,220B,240,3.0,220B,409.8,Unknown,General
+Command R+,35B,60,1.7,35B,65.2,Decoder-only,Chat
+Gemma-2B,2B,6,0.5,2B,3.7,Decoder-only,General
+Gemma-7B,7B,20,0.9,7B,13.0,Decoder-only,General
+Phi-3 Mini (3.8B),3.8B,12,0.6,3.8B,7.1,Decoder-only,General
+Phi-3 Small (7B),7B,22,0.9,7B,13.0,Decoder-only,General
+Phi-3 Medium (14B),14B,44,1.3,14B,26.1,Decoder-only,General
+Mixtral-8x22B,MoE-8x22B,96,2.1,MoE-8x22B,,MoE (Mixture of Experts),General
+LLaVA-1.6,13B,40,1.4,13B,24.2,Multimodal (Vision + Text),Vision + Chat
+LLaVA-1.8,34B,68,2.2,34B,63.3,Multimodal (Vision + Text),Vision + Chat
+LLaMA 3-8B,8B,26,0.95,8B,14.9,Decoder-only,General
+LLaMA 3-70B,70B,80,2.4,70B,130.4,Decoder-only,General
+Command R+ 104B,104B,120,3.1,104B,193.7,Decoder-only,Chat
