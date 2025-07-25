@@ -49,40 +49,41 @@ with open("data/gpu_catalog.json") as f:
 # Core logic
 def estimate_gpu_requirement(model: ModelInput, users: int, latency: int):
     base_latency = model.Base_Latency_s
-    required_latency = latency / 1000  # ms to seconds
+    required_latency = latency / 1000  # convert ms to s
 
     if required_latency < base_latency:
         raise HTTPException(status_code=400, detail="Requested latency is lower than model base latency.")
 
-    # Calculate concurrency
+    # Estimate concurrency per GPU
     parallelism = max(1, math.floor(required_latency / base_latency))
-    concurrent_per_gpu = parallelism
-    required_gpus = math.ceil(users / concurrent_per_gpu)
 
-    # Filter suitable GPUs
+    # Filter GPUs that can handle that many parallel users (VRAM constraint)
     suitable_gpus = [
         gpu for gpu in gpu_catalog
-        if gpu["VRAM (GB)"] >= model.VRAM_Required_GB
+        if gpu["VRAM (GB)"] >= model.VRAM_Required_GB * parallelism
     ]
 
     if not suitable_gpus:
         return {"recommendation": None}
 
-    # Sort GPUs by VRAM (cheapest first assumption)
+    # Sort by VRAM (cheapest first assumption)
     sorted_gpus = sorted(suitable_gpus, key=lambda x: x["VRAM (GB)"])
     best_gpu = sorted_gpus[0]
+
+    # Calculate GPU count
+    required_gpus = math.ceil(users / parallelism)
 
     return {
         "recommendation": {
             "gpu": best_gpu["GPU Type"],
             "quantity": required_gpus,
-            "gpu_memory": model.VRAM_Required_GB
+            "gpu_memory": model.VRAM_Required_GB * parallelism
         },
         "alternatives": [
             {
                 "gpu": gpu["GPU Type"],
                 "quantity": required_gpus,
-                "gpu_memory": model.VRAM_Required_GB
+                "gpu_memory": model.VRAM_Required_GB * parallelism
             }
             for gpu in sorted_gpus[1:5]
         ]
