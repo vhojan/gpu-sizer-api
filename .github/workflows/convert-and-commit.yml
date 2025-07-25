@@ -1,0 +1,34 @@
+name: Convert CSV to JSON
+
+on:
+  push:
+    paths:
+      - 'data/*.csv'
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.10
+
+      - name: Install pandas
+        run: pip install pandas
+
+      - name: Run conversion script
+        run: python scripts/convert_csv_to_json.py
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add data/*.json
+          git commit -m "Auto-convert CSV to JSON"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
