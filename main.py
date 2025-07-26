@@ -7,7 +7,7 @@ from sizing_logic import estimate_gpu_requirement
 
 app = FastAPI()
 
-# Allow CORS for all domains
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model and GPU catalogs from JSON files
+# Load model and GPU catalogs
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_CATALOG_PATH = os.path.join(BASE_DIR, "data", "model_catalog.json")
 GPU_CATALOG_PATH = os.path.join(BASE_DIR, "data", "gpu_catalog.json")
@@ -31,11 +31,11 @@ with open(GPU_CATALOG_PATH, "r") as f:
 def read_root():
     return {"message": "Welcome to the GPU Sizer API"}
 
-@app.get("/models", response_model=List[dict])
+@app.get("/models")
 def get_models():
     return model_catalog
 
-@app.get("/gpus", response_model=List[dict])
+@app.get("/gpus")
 def get_gpus():
     return gpu_catalog
 
@@ -44,9 +44,16 @@ def get_recommendation(model: str, users: int, latency: float):
     try:
         matching_model = next((m for m in model_catalog if m["Model"] == model), None)
         if not matching_model:
-            raise HTTPException(status_code=404, detail="Model not found")
+            raise HTTPException(status_code=404, detail=f"Model '{model}' not found.")
 
         result = estimate_gpu_requirement(matching_model, users, latency, gpu_catalog)
-        return result
+        return {
+            "model": model,
+            "users": users,
+            "latency_ms": latency,
+            "recommendation": result[0],
+            "alternatives": result[1]
+        }
     except Exception as e:
+        print(f"[ERROR] in /recommendation: {e}")
         raise HTTPException(status_code=500, detail=f"Error during recommendation: {str(e)}")

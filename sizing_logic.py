@@ -1,52 +1,61 @@
-from typing import Dict, List
-
-
-def estimate_gpu_requirement(model: Dict, users: int, latency: int, gpu_catalog: List[Dict]) -> Dict:
+def estimate_gpu_requirement(model: dict, users: int, latency: int, gpu_catalog: list):
     try:
-        vram_per_user = model.get("VRAM (GB) per user")
-        tps_per_user = model.get("Tokens per second per user")
-        model_name = model.get("Model")
+        base_latency = model["Base Latency (s)"]
+        base_vram = model["VRAM Required (GB)"]
+        kv_cache_per_user = model.get("KV Cache (GB per user)", 0)
 
-        if vram_per_user is None or tps_per_user is None:
-            raise ValueError(f"Missing VRAM or TPS data for model '{model_name}'")
+        if base_latency is None or base_vram is None:
+            raise ValueError("Missing VRAM or latency info in model catalog")
 
-        total_vram = users * vram_per_user
-        total_tps = users * tps_per_user
+        required_vram = base_vram + kv_cache_per_user * users
+        required_latency = latency / 1000.0  # convert to seconds
 
-        print(f"[INFO] Model: {model_name}, Users: {users}, Latency: {latency}")
-        print(f"[INFO] Required VRAM: {total_vram} GB, Required TPS: {total_tps}")
+        print(f"[INFO] Base VRAM: {base_vram} GB")
+        print(f"[INFO] KV Cache total: {kv_cache_per_user * users} GB")
+        print(f"[INFO] Required VRAM: {required_vram} GB for {users} users")
+        print(f"[INFO] Latency target: {required_latency}s")
 
-        matches = []
-
+        suitable_gpus = []
         for gpu in gpu_catalog:
-            gpu_name = gpu.get("Name")
-            gpu_vram = gpu.get("VRAM (GB)", 0)
-            gpu_tps = gpu.get("Tokens per second", 0)
+            try:
+                name = gpu.get("Name")
+                vram = gpu.get("Memory (GB)")
+                tps = gpu.get("Tokens/sec")
 
-            if not gpu_name or gpu_vram <= 0 or gpu_tps <= 0:
-                print(f"[WARN] Skipping GPU due to missing VRAM/TPS: {gpu_name}")
-                continue
+                if not all([name, vram, tps]):
+                    continue  # Skip incomplete entries
 
-            quantity_vram = total_vram / gpu_vram
-            quantity_tps = total_tps / gpu_tps
-            quantity = max(quantity_vram, quantity_tps)
-            quantity = int(quantity) + (0 if quantity.is_integer() else 1)
+                if vram >= required_vram:
+                    # Estimate how many users this GPU can handle within latency
+                    # E.g., latency * tps = token budget
+                    # Assume 100 tokens per user as a simplification
+                    supported_users = int((tps * required_latency) / 100)
 
-            matches.append({
-                "gpu": gpu_name,
-                "quantity": quantity,
-                "gpu_memory": gpu_vram
-            })
+                    if supported_users >= users:
+                        suitable_gpus.append({
+                            "gpu": name,
+                            "gpu_memory": vram,
+                            "quantity": 1
+                        })
+                    else:
+                        quantity = int(users / supported_users) + 1
+                        suitable_gpus.append({
+                            "gpu": name,
+                            "gpu_memory": vram,
+                            "quantity": quantity
+                        })
+            except Exception as gpu_err:
+                print(f"[WARNING] Skipping GPU due to error: {gpu_err}")
 
-        if not matches:
-            print(f"[WARN] No suitable GPUs found for {model_name}")
-            return {"recommendation": None, "alternatives": []}
+        suitable_gpus.sort(key=lambda g: (g["quantity"], g["gpu_memory"]))
 
-        matches.sort(key=lambda g: (g["quantity"] * g["gpu_memory"], g["quantity"]))
-        return {
-            "recommendation": matches[0],
-            "alternatives": matches[1:5]
-        }
+        if not suitable_gpus:
+            raise ValueError(f"No suitable GPU found for model {model['Model']}")
+
+        best = suitable_gpus[0]
+        alternatives = suitable_gpus[1:3]
+
+        return best, alternatives
 
     except Exception as e:
         print(f"[ERROR] in estimate_gpu_requirement: {e}")
