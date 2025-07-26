@@ -16,11 +16,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model and GPU catalogs
+# Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_CATALOG_PATH = os.path.join(BASE_DIR, "data", "model_catalog.json")
 GPU_CATALOG_PATH = os.path.join(BASE_DIR, "data", "gpu_catalog.json")
 
+# Load catalogs
 with open(MODEL_CATALOG_PATH, "r") as f:
     model_catalog = json.load(f)
 
@@ -31,29 +32,24 @@ with open(GPU_CATALOG_PATH, "r") as f:
 def read_root():
     return {"message": "Welcome to the GPU Sizer API"}
 
-@app.get("/models")
+@app.get("/models", response_model=List[dict])
 def get_models():
     return model_catalog
 
-@app.get("/gpus")
+@app.get("/gpus", response_model=List[dict])
 def get_gpus():
     return gpu_catalog
 
 @app.get("/recommendation")
 def get_recommendation(model: str, users: int, latency: float):
     try:
-        matching_model = next((m for m in model_catalog if m["Model"] == model), None)
+        matching_model = next((m for m in model_catalog if m.get("Model") == model), None)
         if not matching_model:
-            raise HTTPException(status_code=404, detail=f"Model '{model}' not found.")
+            raise HTTPException(status_code=404, detail="Model not found")
 
         result = estimate_gpu_requirement(matching_model, users, latency, gpu_catalog)
-        return {
-            "model": model,
-            "users": users,
-            "latency_ms": latency,
-            "recommendation": result[0],
-            "alternatives": result[1]
-        }
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
     except Exception as e:
-        print(f"[ERROR] in /recommendation: {e}")
         raise HTTPException(status_code=500, detail=f"Error during recommendation: {str(e)}")
