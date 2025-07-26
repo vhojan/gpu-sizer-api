@@ -1,62 +1,71 @@
-import math
-from typing import Dict, List
-
-def estimate_gpu_requirement(model: Dict, users: int, latency: float, gpu_catalog: List[Dict]) -> Dict:
-    model_name = model.get("Model", "Unknown")
+def estimate_gpu_requirement(model: dict, users: int, latency_target_ms: float, gpu_catalog: list) -> dict:
     try:
-        base_latency = model.get("Base_Latency_s")
-        base_vram = model.get("Base_VRAM_GB")
-        tps = model.get("Tokens_per_second")
+        # Validate fields
+        required_fields = ["VRAM Required (GB)", "Base Latency (s)", "KV Cache (GB per user)"]
+        for field in required_fields:
+            if field not in model:
+                raise ValueError(f"Missing required field '{field}' in model '{model.get('Model', '')}'")
 
-        if base_latency is None or base_vram is None or tps is None:
-            raise ValueError(f"Missing VRAM or TPS data for model '{model_name}'")
+        model_vram = model["VRAM Required (GB)"]
+        kv_cache_per_user = model["KV Cache (GB per user)"]
+        base_latency_s = model["Base Latency (s)"]
 
-        # Estimate required VRAM and TFLOPs
-        required_vram = base_vram * users
-        required_tps = tps * users
+        total_vram_required = model_vram + (kv_cache_per_user * users)
+        latency_target_s = latency_target_ms / 1000.0
 
-        # Allow some overhead buffer
-        required_vram *= 1.2
-        required_tps *= 1.2
+        candidates = []
 
-        # Filter GPUs that meet VRAM and TPS requirement
-        suitable_gpus = []
         for gpu in gpu_catalog:
-            try:
-                gpu_name = gpu["Name"]
-                gpu_vram = float(gpu["VRAM_GB"])
-                gpu_tps = float(gpu["Tokens_per_second"])
+            gpu_type = gpu["GPU Type"]
+            gpu_vram = gpu["VRAM (GB)"]
+            gpu_tflops = gpu["TFLOPs (FP16)"]
+            latency_factor = gpu["Latency Factor"]
+            tokens_per_second = gpu["Tokens/s"]
+            supports_nvlink = gpu.get("NVLink", False)
+            max_nvlink = int(gpu["Max NVLink GPUs"]) if gpu.get("Max NVLink GPUs", "-").isdigit() else 1
 
-                if gpu_vram >= required_vram and gpu_tps >= required_tps:
-                    suitable_gpus.append({
-                        "GPU": gpu_name,
-                        "Count": 1,
-                        "VRAM_GB": gpu_vram,
-                        "Tokens_per_second": gpu_tps,
+            adjusted_latency = base_latency_s * latency_factor
+            meets_latency = adjusted_latency <= latency_target_s
+
+            if meets_latency:
+                # Try to fit model on single GPU
+                if gpu_vram >= total_vram_required:
+                    candidates.append({
+                        "GPU Type": gpu_type,
+                        "Config": "1x",
+                        "Total VRAM (GB)": gpu_vram,
+                        "Total TFLOPs": gpu_tflops,
+                        "Latency (s)": round(adjusted_latency, 3),
+                        "Meets Latency": True,
+                        "Tokens/s": tokens_per_second
                     })
-                elif "NVLink" in gpu.get("Features", []) and gpu_vram * 2 >= required_vram and gpu_tps * 2 >= required_tps:
-                    suitable_gpus.append({
-                        "GPU": gpu_name,
-                        "Count": 2,
-                        "VRAM_GB": gpu_vram,
-                        "Tokens_per_second": gpu_tps,
-                        "Note": "Uses NVLink"
-                    })
-            except Exception as e:
-                print(f"Skipping GPU due to error: {e}")
+                # Try multi-GPU with NVLink
+                elif supports_nvlink:
+                    for num_gpus in range(2, max_nvlink + 1):
+                        combined_vram = gpu_vram * num_gpus
+                        if combined_vram >= total_vram_required:
+                            candidates.append({
+                                "GPU Type": gpu_type,
+                                "Config": f"{num_gpus}x NVLink",
+                                "Total VRAM (GB)": combined_vram,
+                                "Total TFLOPs": gpu_tflops * num_gpus,
+                                "Latency (s)": round(adjusted_latency, 3),
+                                "Meets Latency": True,
+                                "Tokens/s": tokens_per_second * num_gpus
+                            })
+                            break  # Stop after first fitting NVLink combo
 
-        if not suitable_gpus:
-            raise ValueError(f"No suitable GPU found for model {model_name}")
+        if not candidates:
+            return {"error": "No suitable GPU configuration found"}
 
-        # Sort by GPU count first, then VRAM ascending
-        suitable_gpus.sort(key=lambda x: (x["Count"], x["VRAM_GB"]))
-
+        sorted_candidates = sorted(candidates, key=lambda x: (x["Total VRAM (GB)"], x["Latency (s)"]))
         return {
-            "model": model_name,
-            "required_vram_gb": round(required_vram, 2),
-            "required_tokens_per_second": round(required_tps, 2),
-            "recommendation": suitable_gpus[0],
-            "alternatives": suitable_gpus[1:],
+            "model": model["Model"],
+            "users": users,
+            "latency_target_ms": latency_target_ms,
+            "total_vram_required_gb": total_vram_required,
+            "recommended": sorted_candidates[0],
+            "alternatives": sorted_candidates[1:3]  # up to 2 alternatives
         }
 
     except Exception as e:
