@@ -18,10 +18,10 @@ app.add_middleware(
 )
 
 # Load GPU and model catalogs once at startup
-with open("gpu_catalog.json") as f:
+with open("data/gpu_catalog.json") as f:
     gpu_catalog = json.load(f)
 
-with open("model_catalog.json") as f:
+with open("data/model_catalog.json") as f:
     model_catalog = json.load(f)
 
 
