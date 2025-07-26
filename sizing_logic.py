@@ -1,75 +1,53 @@
-import math
-from fastapi import HTTPException
+from typing import Dict, List, Optional
 
-def estimate_gpu_requirement(model, users: int, latency: int, gpu_catalog: list, kv_cache_enabled: bool = False):
-    base_latency = model.Base_Latency_s
-    required_latency = latency / 1000  # ms → seconds
 
-    if required_latency < base_latency:
-        raise HTTPException(status_code=400, detail="Requested latency is lower than model base latency.")
+def estimate_gpu_requirement(model: Dict, users: int, latency: int, gpu_catalog: List[Dict]) -> Dict:
+    try:
+        vram_per_user = model.get("VRAM (GB) per user", 0)
+        tps_required = model.get("Tokens per second per user", 0)
+        base_latency = model.get("Base Latency (s)", 1)
 
-    # Adjust VRAM requirement based on KV cache
-    kv_factor = 2 if kv_cache_enabled else 1
-    vram_per_user = model.VRAM_Required_GB * kv_factor
-    total_vram = users * vram_per_user
+        if not vram_per_user or not tps_required:
+            raise ValueError("Missing VRAM or TPS values in model")
 
-    # Calculate concurrency per GPU based on latency
-    parallelism = max(1, math.floor(required_latency / base_latency))
-    concurrent_per_gpu = parallelism
-    required_gpus = math.ceil(users / concurrent_per_gpu)
+        total_vram_required = vram_per_user * users
+        total_tps_required = tps_required * users
 
-    # Step 1: Filter GPUs that meet per-GPU VRAM requirement
-    suitable_gpus = [
-        gpu for gpu in gpu_catalog
-        if gpu["VRAM (GB)"] >= vram_per_user
-    ]
+        matching_gpus = []
 
-    if not suitable_gpus:
-        return {"recommendation": None, "alternatives": []}
+        for gpu in gpu_catalog:
+            gpu_name = gpu["Name"]
+            gpu_vram = gpu.get("VRAM (GB)", 0)
+            gpu_tps = gpu.get("Tokens per second", 0)
 
-    # Step 2: Single-GPU option if enough
-    if required_gpus == 1:
-        sorted_single = sorted(suitable_gpus, key=lambda g: (g["VRAM (GB)"], -g["TFLOPs (FP16)"]))
-        best_gpu = sorted_single[0]
-        alternatives = sorted_single[1:5]
-        return {
-            "recommendation": {
-                "gpu": best_gpu["GPU Type"],
-                "quantity": 1,
-                "gpu_memory": vram_per_user
-            },
-            "alternatives": [
-                {
-                    "gpu": gpu["GPU Type"],
-                    "quantity": 1,
-                    "gpu_memory": vram_per_user
-                } for gpu in alternatives
-            ]
-        }
+            if not gpu_tps or not gpu_vram:
+                continue
 
-    # Step 3: Multi-GPU fallback with NVLink
-    nvlink_candidates = [
-        gpu for gpu in suitable_gpus
-        if gpu.get("NVLink", False) and required_gpus <= int(gpu.get("Max NVLink GPUs", "1"))
-    ]
+            # How many GPUs needed to meet TPS and VRAM demand
+            gpu_count_tps = (total_tps_required / gpu_tps)
+            gpu_count_vram = (total_vram_required / gpu_vram)
+            gpu_count = max(gpu_count_tps, gpu_count_vram)
 
-    if nvlink_candidates:
-        sorted_nvlink = sorted(nvlink_candidates, key=lambda g: (g["VRAM (GB)"], -g["TFLOPs (FP16)"]))
-        best_gpu = sorted_nvlink[0]
-        alternatives = sorted_nvlink[1:5]
-        return {
-            "recommendation": {
-                "gpu": best_gpu["GPU Type"],
-                "quantity": required_gpus,
-                "gpu_memory": vram_per_user
-            },
-            "alternatives": [
-                {
-                    "gpu": gpu["GPU Type"],
-                    "quantity": required_gpus,
-                    "gpu_memory": vram_per_user
-                } for gpu in alternatives
-            ]
-        }
+            # Round up GPU count
+            quantity = int(gpu_count) + (0 if gpu_count.is_integer() else 1)
 
-    return {"recommendation": None, "alternatives": []}
+            matching_gpus.append({
+                "gpu": gpu_name,
+                "quantity": quantity,
+                "gpu_memory": gpu_vram
+            })
+
+        # Sort by total GPU memory (quantity * vram), then by quantity
+        matching_gpus.sort(key=lambda g: (g["quantity"] * g["gpu_memory"], g["quantity"]))
+
+        if matching_gpus:
+            return {
+                "recommendation": matching_gpus[0],
+                "alternatives": matching_gpus[1:5]
+            }
+        else:
+            return {"recommendation": None, "alternatives": []}
+
+    except Exception as e:
+        print(f"Error in estimate_gpu_requirement: {e}")
+        raise
