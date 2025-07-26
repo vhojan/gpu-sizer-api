@@ -1,51 +1,45 @@
-import json
-import math
-from typing import Optional, List
-
 from fastapi import FastAPI, Query
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
+from typing import List, Optional
+import json
+import os
 from sizing_logic import estimate_gpu_requirement
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-class Recommendation(BaseModel):
-    gpu: str
-    quantity: int
-    gpu_memory: int
-
-
-class RecommendationResponse(BaseModel):
-    recommendation: Optional[Recommendation]
-    alternatives: List[Recommendation]
-
-
-# Load model and GPU catalogs
+# Load the catalogs at startup
 with open("data/model_catalog.json") as f:
     model_catalog = json.load(f)
 
 with open("data/gpu_catalog.json") as f:
     gpu_catalog = json.load(f)
 
+class Recommendation(BaseModel):
+    gpu: str
+    quantity: int
+    gpu_memory: int
+
+class RecommendationResponse(BaseModel):
+    recommendation: Optional[Recommendation]
+    alternatives: List[Recommendation]
 
 @app.get("/recommendation", response_model=RecommendationResponse)
 def get_recommendation(
-    model: str = Query(...), users: int = Query(...), latency: int = Query(...)
+    model: str = Query(...),
+    users: int = Query(..., gt=0),
+    latency: int = Query(..., gt=0)
 ):
-    # Find the model data
-    model_data = next((m for m in model_catalog if m["Model"] == model), None)
-    if not model_data:
+    matching_model = next((m for m in model_catalog if m["Model"] == model), None)
+    if not matching_model:
         return {"recommendation": None, "alternatives": []}
 
-    result = estimate_gpu_requirement(model_data, users, latency, gpu_catalog)
+    result = estimate_gpu_requirement(matching_model, users, latency, gpu_catalog)
     return result
+
+@app.get("/models", response_model=List[str])
+def list_models():
+    return [m["Model"] for m in model_catalog]
+
+@app.get("/gpus", response_model=List[str])
+def list_gpus():
+    return [g["Name"] for g in gpu_catalog]
