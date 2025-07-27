@@ -8,7 +8,7 @@
     "Weights Size (FP16, GB)": 13.0,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 0.5
   },
   {
     "Model": "LLaMA2-13B",
@@ -19,7 +19,7 @@
     "Weights Size (FP16, GB)": 24.2,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 0.8
   },
   {
     "Model": "LLaMA2-70B",
@@ -30,7 +30,7 @@
     "Weights Size (FP16, GB)": 130.4,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 1.9
   },
   {
     "Model": "LLaMA 3-400B (Maverick)",
@@ -41,7 +41,7 @@
     "Weights Size (FP16, GB)": 745.1,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 6.0
   },
   {
     "Model": "GPT-3.5",
@@ -52,7 +52,7 @@
     "Weights Size (FP16, GB)": 326.0,
     "Architecture": "Unknown",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 4.5
   },
   {
     "Model": "Claude 3 Opus",
@@ -85,7 +85,7 @@
     "Weights Size (FP16, GB)": 3.7,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 0.2
   },
   {
     "Model": "Gemma-7B",
@@ -96,7 +96,7 @@
     "Weights Size (FP16, GB)": 13.0,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 0.5
   },
   {
     "Model": "Phi-3 Mini (3.8B)",
@@ -107,7 +107,7 @@
     "Weights Size (FP16, GB)": 7.1,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 0.3
   },
   {
     "Model": "Phi-3 Small (7B)",
@@ -118,7 +118,7 @@
     "Weights Size (FP16, GB)": 13.0,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 0.5
   },
   {
     "Model": "Phi-3 Medium (14B)",
@@ -129,7 +129,7 @@
     "Weights Size (FP16, GB)": 26.1,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 0.8
   },
   {
     "Model": "Mixtral-8x22B",
@@ -151,7 +151,7 @@
     "Weights Size (FP16, GB)": 24.2,
     "Architecture": "Multimodal (Vision + Text)",
     "Intended Use": "Vision + Chat",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 0.8
   },
   {
     "Model": "LLaVA-1.8",
@@ -162,7 +162,7 @@
     "Weights Size (FP16, GB)": 63.3,
     "Architecture": "Multimodal (Vision + Text)",
     "Intended Use": "Vision + Chat",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 1.3
   },
   {
     "Model": "LLaMA 3-8B",
@@ -173,7 +173,7 @@
     "Weights Size (FP16, GB)": 14.9,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 1.0
   },
   {
     "Model": "LLaMA 3-70B",
@@ -184,7 +184,7 @@
     "Weights Size (FP16, GB)": 130.4,
     "Architecture": "Decoder-only",
     "Intended Use": "General",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 1.9
   },
   {
     "Model": "Command R+ 104B",
@@ -195,6 +195,6 @@
     "Weights Size (FP16, GB)": 193.7,
     "Architecture": "Decoder-only",
     "Intended Use": "Chat",
-    "KV Cache (GB per user)": 1.5
+    "KV Cache (GB per user)": 3.8
   }
 ]
