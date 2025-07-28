@@ -1,3 +1,4 @@
+from model_service import router as model_router, create_db
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
@@ -6,6 +7,10 @@ import os
 from sizing_logic import estimate_gpu_requirement
 
 app = FastAPI()
+
+create_db()  # initialize model DB table
+
+app.include_router(model_router)
 
 # Allow CORS for all domains
 app.add_middleware(
