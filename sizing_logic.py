@@ -1,17 +1,20 @@
+# sizing_logic.py
+
 def estimate_gpu_requirement(model: dict, users: int, latency_target_ms: float, gpu_catalog: list) -> dict:
     try:
         # Validate fields
-        required_fields = ["VRAM Required (GB)", "Base Latency (s)", "KV Cache (GB per user)"]
+        required_fields = ["kv_cache_fp16_gb"]
         for field in required_fields:
             if field not in model:
-                raise ValueError(f"Missing required field '{field}' in model '{model.get('Model', '')}'")
+                raise ValueError(f"Missing required field '{field}' in model '{model.get('model_id', '')}'")
 
-        model_vram = model["VRAM Required (GB)"]
-        kv_cache_per_user = model["KV Cache (GB per user)"]
-        base_latency_s = model["Base Latency (s)"]
+        # For compatibility with your new backend/DB fields:
+        model_vram = model.get("vram_required_gb") or model.get("VRAM Required (GB)") or 0
+        kv_cache_per_user = model.get("kv_cache_fp16_gb") or model.get("KV Cache (GB per user)") or 0
+        base_latency_s = model.get("base_latency_s") or model.get("Base Latency (s)") or 1.0
 
-        total_vram_required = model_vram + (kv_cache_per_user * users)
-        latency_target_s = latency_target_ms / 1000.0
+        total_vram_required = float(model_vram) + (float(kv_cache_per_user) * users)
+        latency_target_s = float(latency_target_ms) / 1000.0
 
         candidates = []
 
@@ -19,10 +22,10 @@ def estimate_gpu_requirement(model: dict, users: int, latency_target_ms: float, 
             gpu_type = gpu["GPU Type"]
             gpu_vram = gpu["VRAM (GB)"]
             gpu_tflops = gpu["TFLOPs (FP16)"]
-            latency_factor = gpu["Latency Factor"]
-            tokens_per_second = gpu["Tokens/s"]
+            latency_factor = gpu.get("Latency Factor", 1)
+            tokens_per_second = gpu.get("Tokens/s", 0)
             supports_nvlink = gpu.get("NVLink", False)
-            max_nvlink = int(gpu["Max NVLink GPUs"]) if gpu.get("Max NVLink GPUs", "-").isdigit() else 1
+            max_nvlink = int(gpu.get("Max NVLink GPUs", 1)) if str(gpu.get("Max NVLink GPUs", "1")).isdigit() else 1
 
             adjusted_latency = base_latency_s * latency_factor
             meets_latency = adjusted_latency <= latency_target_s
@@ -60,7 +63,7 @@ def estimate_gpu_requirement(model: dict, users: int, latency_target_ms: float, 
 
         sorted_candidates = sorted(candidates, key=lambda x: (x["Total VRAM (GB)"], x["Latency (s)"]))
         return {
-            "model": model["Model"],
+            "model": model.get("model_id") or model.get("Model"),
             "users": users,
             "latency_target_ms": latency_target_ms,
             "total_vram_required_gb": total_vram_required,
@@ -70,3 +73,7 @@ def estimate_gpu_requirement(model: dict, users: int, latency_target_ms: float, 
 
     except Exception as e:
         raise RuntimeError(f"Error in estimate_gpu_requirement: {str(e)}")
+
+# You might also need a get_gpu_recommendation wrapper if your main.py expects it:
+def get_gpu_recommendation(model: dict, users: int, latency: float, gpu_catalog: list):
+    return estimate_gpu_requirement(model, users, latency, gpu_catalog)

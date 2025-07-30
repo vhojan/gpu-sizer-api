@@ -1,182 +1,116 @@
 import sqlite3
 import json
-import os
-from datetime import datetime
 from transformers import AutoConfig
-from fastapi import APIRouter, HTTPException
-from huggingface_hub import HfApi, login
-from dotenv import load_dotenv
+from huggingface_hub import HfApi
+import os
 
-# Load .env and authenticate with Hugging Face
-load_dotenv()
-token = os.getenv("HUGGINGFACE_HUB_TOKEN")
-if token:
-    login(token=token)
+HF_TOKEN = os.environ.get("HF_TOKEN", None)
 
-DB_PATH = "models.db"
-SEQ_LEN = 2048
+class ModelService:
+    def __init__(self, db_path):
+        self.db_path = db_path
 
-router = APIRouter()
+    def list_models(self):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("SELECT model_id FROM models")
+        models = [row[0] for row in c.fetchall()]
+        conn.close()
+        return models
 
-def create_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS models (
-            model_id TEXT PRIMARY KEY,
-            architecture TEXT,
-            hidden_size INTEGER,
-            num_hidden_layers INTEGER,
-            num_attention_heads INTEGER,
-            use_cache BOOLEAN,
-            kv_cache_fp16_gb FLOAT,
-            kv_cache_bf16_gb FLOAT,
-            kv_cache_fp32_gb FLOAT,
-            config_json TEXT,
-            query_count INTEGER DEFAULT 0,
-            last_accessed_at TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    def search_models(self, query):
+        # Local DB search
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        like_query = f"%{query}%"
+        c.execute("SELECT model_id FROM models WHERE model_id LIKE ?", (like_query,))
+        local_matches = {row[0] for row in c.fetchall()}
+        conn.close()
 
-def calculate_kv_cache_bytes(config, dtype_bytes=2):
-    try:
-        num_layers = config.num_hidden_layers
-        num_heads = config.num_attention_heads
-        head_dim = config.hidden_size // num_heads
-        return num_layers * num_heads * head_dim * SEQ_LEN * 2 * dtype_bytes
-    except Exception:
-        return None
+        # Hugging Face Hub search (top 5 models)
+        api = HfApi()
+        remote_matches = set()
+        try:
+            results = api.list_models(search=query, limit=5)
+            for model in results:
+                remote_matches.add(model.modelId)
+        except Exception as e:
+            print(f"[ERROR] Hugging Face Hub search failed: {e}")
 
-def fetch_model_info(model_id):
-    print(f"Fetching model: {model_id}")
-    config = AutoConfig.from_pretrained(model_id, token=True, trust_remote_code=True)
+        # Combine, keeping order (local first)
+        combined = list(local_matches) + [m for m in remote_matches if m not in local_matches]
+        return combined
 
-    # Ensure required fields exist
-    required = ["hidden_size", "num_hidden_layers", "num_attention_heads"]
-    for attr in required:
-        if not hasattr(config, attr):
-            raise ValueError(f"Missing required config field: '{attr}'")
+    def get_model_details(self, model_id: str):
+        print(f"[DEBUG] Looking up model_id: {model_id}")
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("SELECT * FROM models WHERE model_id=?", (model_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            print(f"[DEBUG] Found in DB: {model_id}")
+            return self._row_to_dict(row)
+        # Try HuggingFace fallback
+        try:
+            print(f"[DEBUG] Fetching from Hugging Face: {model_id}")
+            config = AutoConfig.from_pretrained(model_id, trust_remote_code=True, use_auth_token=HF_TOKEN)
+            hidden_size = getattr(config, "hidden_size", None)
+            num_layers = getattr(config, "num_hidden_layers", None)
+            num_heads = getattr(config, "num_attention_heads", None)
+            use_cache = getattr(config, "use_cache", None)
+            seq_len = getattr(config, "max_position_embeddings", 2048)
+            fp16_bytes = 2
+            kv_cache_fp16_gb = None
+            if hidden_size and num_layers and num_heads and seq_len:
+                kv_cache_fp16_gb = (
+                    num_layers * num_heads * seq_len * hidden_size * 2 * fp16_bytes / (1024 ** 3)
+                )
+            result = {
+                "model_id": model_id,
+                "architecture": getattr(config, "architectures", ["Unknown"])[0],
+                "hidden_size": hidden_size,
+                "num_hidden_layers": num_layers,
+                "num_attention_heads": num_heads,
+                "use_cache": use_cache,
+                "kv_cache_fp16_gb": round(kv_cache_fp16_gb, 3) if kv_cache_fp16_gb else None,
+                "kv_cache_bf16_gb": None,
+                "kv_cache_fp32_gb": None,
+                "config_json": config.to_json_string(),
+                "query_count": 0,
+                "last_accessed_at": None,
+            }
+            self.save_model(result)
+            print(f"[DEBUG] Model fetched and saved: {model_id}")
+            return result
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] Failed to fetch from HF for model_id={model_id}: {e}")
+            traceback.print_exc()
+            return None
 
-    kv_fp16 = calculate_kv_cache_bytes(config, dtype_bytes=2)
-    kv_fp32 = calculate_kv_cache_bytes(config, dtype_bytes=4)
+    def save_model(self, model_info):
+        # Save model details to DB, upsert-style
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        columns = ', '.join(model_info.keys())
+        placeholders = ', '.join('?' * len(model_info))
+        update_assignments = ', '.join(f"{col}=excluded.{col}" for col in model_info)
+        sql = f"""
+            INSERT INTO models ({columns})
+            VALUES ({placeholders})
+            ON CONFLICT(model_id) DO UPDATE SET {update_assignments}
+        """
+        c.execute(sql, tuple(model_info.values()))
+        conn.commit()
+        conn.close()
 
-    return {
-        "model_id": model_id,
-        "architecture": getattr(config, "architectures", ["unknown"])[0],
-        "hidden_size": config.hidden_size,
-        "num_hidden_layers": config.num_hidden_layers,
-        "num_attention_heads": config.num_attention_heads,
-        "use_cache": getattr(config, "use_cache", True),
-        "kv_cache_fp16_gb": round(kv_fp16 / 1e9, 3) if kv_fp16 else None,
-        "kv_cache_bf16_gb": round(kv_fp16 / 1e9, 3) if kv_fp16 else None,
-        "kv_cache_fp32_gb": round(kv_fp32 / 1e9, 3) if kv_fp32 else None,
-        "config_json": json.dumps(config.to_dict()),
-        "query_count": 1,
-        "last_accessed_at": datetime.utcnow().isoformat()
-    }
-
-def store_model_info(model_data):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''
-        INSERT OR REPLACE INTO models VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        model_data["model_id"],
-        model_data["architecture"],
-        model_data["hidden_size"],
-        model_data["num_hidden_layers"],
-        model_data["num_attention_heads"],
-        model_data["use_cache"],
-        model_data["kv_cache_fp16_gb"],
-        model_data["kv_cache_bf16_gb"],
-        model_data["kv_cache_fp32_gb"],
-        model_data["config_json"],
-        model_data["query_count"],
-        model_data["last_accessed_at"]
-    ))
-    conn.commit()
-    conn.close()
-
-def increment_model_usage(model_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''
-        UPDATE models
-        SET query_count = query_count + 1,
-            last_accessed_at = ?
-        WHERE model_id = ?
-    ''', (datetime.utcnow().isoformat(), model_id))
-    conn.commit()
-    conn.close()
-
-def get_model_from_db(model_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT * FROM models WHERE model_id = ?", (model_id,))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        return None
-    keys = [
-        "model_id", "architecture", "hidden_size", "num_hidden_layers",
-        "num_attention_heads", "use_cache",
-        "kv_cache_fp16_gb", "kv_cache_bf16_gb", "kv_cache_fp32_gb", "config_json",
-        "query_count", "last_accessed_at"
-    ]
-    return dict(zip(keys, row))
-
-@router.get("/models/search")
-def search_models(q: str):
-    db_results = []
-    hf_results = []
-    seen = set()
-
-    # Search in local DB
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT model_id FROM models WHERE model_id LIKE ? LIMIT 20", (f"%{q}%",))
-    matches = c.fetchall()
-    conn.close()
-
-    for m in matches:
-        model_id = m[0]
-        db_results.append({"label": model_id, "value": model_id})
-        seen.add(model_id)
-
-    # Fallback to Hugging Face Hub
-    api = HfApi()
-    try:
-        results = api.list_models(search=q, limit=20)
-        for model in results:
-            if model.modelId not in seen:
-                hf_results.append({"label": model.modelId, "value": model.modelId})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Hugging Face search failed: {str(e)}")
-
-    return db_results + hf_results
-
-@router.get("/models/{model_id:path}")
-def get_model(model_id: str):
-    model = get_model_from_db(model_id)
-    if model:
-        increment_model_usage(model_id)
-        return model
-    try:
-        model_data = fetch_model_info(model_id)
-        store_model_info(model_data)
-        return model_data
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        error_msg = str(e).lower()
-        if "403" in error_msg and "gated repo" in error_msg:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Access to '{model_id}' is restricted. You may request access at https://huggingface.co/{model_id}"
-            )
-        raise HTTPException(
-            status_code=404,
-            detail=f"Model '{model_id}' not found or failed to load: {str(e)}"
-        )
+    def _row_to_dict(self, row):
+        # Map DB row to dict, column order must match table!
+        keys = [
+            "model_id", "architecture", "hidden_size", "num_hidden_layers",
+            "num_attention_heads", "use_cache", "kv_cache_fp16_gb",
+            "kv_cache_bf16_gb", "kv_cache_fp32_gb", "config_json",
+            "query_count", "last_accessed_at"
+        ]
+        return dict(zip(keys, row))

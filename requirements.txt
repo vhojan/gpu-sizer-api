@@ -4,3 +4,4 @@ gunicorn
 pandas
 transformers
 python-dotenv
+huggingface_hub
