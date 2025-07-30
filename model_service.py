@@ -9,6 +9,29 @@ HF_TOKEN = os.environ.get("HF_TOKEN", None)
 class ModelService:
     def __init__(self, db_path):
         self.db_path = db_path
+        self._ensure_db_schema()  # Ensures the table exists at startup
+
+    def _ensure_db_schema(self):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS models (
+                model_id TEXT PRIMARY KEY,
+                architecture TEXT,
+                hidden_size INTEGER,
+                num_hidden_layers INTEGER,
+                num_attention_heads INTEGER,
+                use_cache BOOLEAN,
+                kv_cache_fp16_gb REAL,
+                kv_cache_bf16_gb REAL,
+                kv_cache_fp32_gb REAL,
+                config_json TEXT,
+                query_count INTEGER,
+                last_accessed_at TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
 
     def list_models(self):
         conn = sqlite3.connect(self.db_path)
