@@ -6,8 +6,23 @@ import json
 from model_service import ModelService
 from sizing_logic import get_gpu_recommendation
 
-#DB_PATH = os.environ.get("DB_PATH", "models.db")
-DB_PATH = os.environ.get("MODELS_DB_PATH", "/home/models.db")
+def get_db_path():
+    # Are we on Azure App Service?
+    on_azure = "WEBSITE_INSTANCE_ID" in os.environ
+
+    if on_azure:
+        db_path = "/home/models.db"
+    else:
+        # Always use the directory where this file lives for local
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        db_path = os.path.join(base_dir, "models.db")
+    return db_path
+
+DB_PATH = get_db_path()
+print(f"[INFO] Using SQLite DB at: {DB_PATH}")
+
+from model_service import ModelService
+MODEL_SERVICE = ModelService(DB_PATH)
 
 MODEL_SERVICE = ModelService(DB_PATH)
 
@@ -27,15 +42,26 @@ def list_models():
 
 @app.get("/models/search")
 def search_models(q: str):
-    return MODEL_SERVICE.search_models(q)
+    local_ids = MODEL_SERVICE.search_models(q)
+    # Format DB results for clarity
+    db_results = [
+        {"model_id": mid, "source": "local"} for mid in local_ids
+    ]
+    hf_results = MODEL_SERVICE.search_hf_models(q, exclude_ids=local_ids)
+    # Combine, locals first
+    return db_results + hf_results
 
-@app.get("/models/{model_id}")
+@app.get("/models/{model_id:path}")
 def get_model(model_id: str, force_recalc_kv: bool = Query(False)):
+    print(f"[HANDLER DEBUG] /models/{model_id} force_recalc_kv={force_recalc_kv}")
+    # Always try the DB, then Hugging Face if missing
     details = MODEL_SERVICE.get_model_details(model_id, force_recalc_kv=force_recalc_kv)
+    if not details:
+        print(f"[INFO] Not found in DB, attempting force fetch for: {model_id}")
+        details = MODEL_SERVICE.get_model_details(model_id, force_recalc_kv=True)
     if not details:
         raise HTTPException(status_code=404, detail="Model not found or inaccessible.")
     return details
-
 
 from fastapi import Path
 
