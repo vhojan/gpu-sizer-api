@@ -2,9 +2,14 @@ from fastapi import FastAPI, HTTPException, Query
 from model_service import ModelService
 from sizing_logic import get_gpu_recommendation
 import json
+import os
 
 app = FastAPI()
-model_service = ModelService("models.db")
+
+# This will use /home/models.db on Azure, or models.db locally for dev
+DB_PATH = os.environ.get("MODELS_DB_PATH", "/home/models.db")
+
+model_service = ModelService(DB_PATH)
 
 @app.get("/models")
 def list_models():
