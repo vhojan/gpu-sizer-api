@@ -1,79 +1,89 @@
-# sizing_logic.py
-
-def estimate_gpu_requirement(model: dict, users: int, latency_target_ms: float, gpu_catalog: list) -> dict:
+def estimate_kv_cache_gb(
+    num_layers,
+    num_attention_heads,
+    hidden_size,
+    seq_len=2048,
+    dtype_bytes=2,  # FP16/BF16=2 bytes, FP32=4 bytes
+    users=1,
+):
+    """
+    Estimate the KV cache requirement in GB.
+    """
     try:
-        # Validate fields
-        required_fields = ["kv_cache_fp16_gb"]
-        for field in required_fields:
-            if field not in model:
-                raise ValueError(f"Missing required field '{field}' in model '{model.get('model_id', '')}'")
-
-        # For compatibility with your new backend/DB fields:
-        model_vram = model.get("vram_required_gb") or model.get("VRAM Required (GB)") or 0
-        kv_cache_per_user = model.get("kv_cache_fp16_gb") or model.get("KV Cache (GB per user)") or 0
-        base_latency_s = model.get("base_latency_s") or model.get("Base Latency (s)") or 1.0
-
-        total_vram_required = float(model_vram) + (float(kv_cache_per_user) * users)
-        latency_target_s = float(latency_target_ms) / 1000.0
-
-        candidates = []
-
-        for gpu in gpu_catalog:
-            gpu_type = gpu["GPU Type"]
-            gpu_vram = gpu["VRAM (GB)"]
-            gpu_tflops = gpu["TFLOPs (FP16)"]
-            latency_factor = gpu.get("Latency Factor", 1)
-            tokens_per_second = gpu.get("Tokens/s", 0)
-            supports_nvlink = gpu.get("NVLink", False)
-            max_nvlink = int(gpu.get("Max NVLink GPUs", 1)) if str(gpu.get("Max NVLink GPUs", "1")).isdigit() else 1
-
-            adjusted_latency = base_latency_s * latency_factor
-            meets_latency = adjusted_latency <= latency_target_s
-
-            if meets_latency:
-                # Try to fit model on single GPU
-                if gpu_vram >= total_vram_required:
-                    candidates.append({
-                        "GPU Type": gpu_type,
-                        "Config": "1x",
-                        "Total VRAM (GB)": gpu_vram,
-                        "Total TFLOPs": gpu_tflops,
-                        "Latency (s)": round(adjusted_latency, 3),
-                        "Meets Latency": True,
-                        "Tokens/s": tokens_per_second
-                    })
-                # Try multi-GPU with NVLink
-                elif supports_nvlink:
-                    for num_gpus in range(2, max_nvlink + 1):
-                        combined_vram = gpu_vram * num_gpus
-                        if combined_vram >= total_vram_required:
-                            candidates.append({
-                                "GPU Type": gpu_type,
-                                "Config": f"{num_gpus}x NVLink",
-                                "Total VRAM (GB)": combined_vram,
-                                "Total TFLOPs": gpu_tflops * num_gpus,
-                                "Latency (s)": round(adjusted_latency, 3),
-                                "Meets Latency": True,
-                                "Tokens/s": tokens_per_second * num_gpus
-                            })
-                            break  # Stop after first fitting NVLink combo
-
-        if not candidates:
-            return {"error": "No suitable GPU configuration found"}
-
-        sorted_candidates = sorted(candidates, key=lambda x: (x["Total VRAM (GB)"], x["Latency (s)"]))
-        return {
-            "model": model.get("model_id") or model.get("Model"),
-            "users": users,
-            "latency_target_ms": latency_target_ms,
-            "total_vram_required_gb": total_vram_required,
-            "recommended": sorted_candidates[0],
-            "alternatives": sorted_candidates[1:3]  # up to 2 alternatives
-        }
-
+        if not all([num_layers, num_attention_heads, hidden_size, seq_len]):
+            return None
+        head_dim = hidden_size // num_attention_heads
+        kv_cache_bytes = num_layers * num_attention_heads * 2 * seq_len * head_dim * dtype_bytes * users
+        kv_cache_gb = kv_cache_bytes / (1024 ** 3)
+        return round(kv_cache_gb, 3)
     except Exception as e:
-        raise RuntimeError(f"Error in estimate_gpu_requirement: {str(e)}")
+        print(f"[ERROR] KV cache estimation failed: {e}")
+        return None
 
-# You might also need a get_gpu_recommendation wrapper if your main.py expects it:
-def get_gpu_recommendation(model: dict, users: int, latency: float, gpu_catalog: list):
-    return estimate_gpu_requirement(model, users, latency, gpu_catalog)
+def get_effective_kv_cache(model_info, seq_len=None, dtype_bytes=2, users=1, kv_cache_override=None, force_recalc_kv=False):
+    """
+    Returns the KV cache requirement in GB, supporting user override and forced recalculation.
+    """
+    if kv_cache_override is not None:
+        try:
+            return float(kv_cache_override)
+        except Exception:
+            pass
+    if force_recalc_kv:
+        # Ignore saved value and estimate anew
+        return estimate_kv_cache_gb(
+            num_layers=model_info.get("num_hidden_layers"),
+            num_attention_heads=model_info.get("num_attention_heads"),
+            hidden_size=model_info.get("hidden_size"),
+            seq_len=seq_len or 2048,
+            dtype_bytes=dtype_bytes,
+            users=users,
+        )
+    # Otherwise use stored value if available, else estimate
+    for k in ["kv_cache_fp16_gb", "kv_cache_bf16_gb", "kv_cache_fp32_gb"]:
+        v = model_info.get(k)
+        if v is not None:
+            try:
+                val = float(v)
+                if val > 0:
+                    return val
+            except Exception:
+                continue
+    # Fallback: estimate
+    return estimate_kv_cache_gb(
+        num_layers=model_info.get("num_hidden_layers"),
+        num_attention_heads=model_info.get("num_attention_heads"),
+        hidden_size=model_info.get("hidden_size"),
+        seq_len=seq_len or 2048,
+        dtype_bytes=dtype_bytes,
+        users=users,
+    )
+
+def get_gpu_recommendation(
+    model_info, gpus, users, latency, kv_cache_override=None, force_recalc_kv=False
+):
+    # 1. Calculate/override/force-recalc KV cache
+    kv_cache_gb = get_effective_kv_cache(
+        model_info, users=users, kv_cache_override=kv_cache_override, force_recalc_kv=force_recalc_kv
+    )
+    if kv_cache_gb is None or kv_cache_gb == 0:
+        return {"error": "Missing or invalid KV cache size for model."}
+
+    # 2. Find all eligible GPUs with enough VRAM
+    eligible_gpus = [gpu for gpu in gpus if (gpu.get("VRAM (GB)", 0) >= kv_cache_gb)]
+    if not eligible_gpus:
+        return {"error": "No suitable GPU found."}
+
+    # 3. Recommend the cheapest (lowest VRAM) GPU
+    eligible_gpus.sort(key=lambda x: x.get("VRAM (GB)", 9999))
+    recommended = eligible_gpus[0]
+    alternatives = eligible_gpus[1:]
+
+    return {
+        "recommended": recommended,
+        "alternatives": alternatives,
+        "required_vram": kv_cache_gb,
+        "kv_cache_fp16_gb": kv_cache_gb,
+        "users": users,
+        "latency": latency,
+    }
