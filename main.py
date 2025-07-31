@@ -1,10 +1,22 @@
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from model_service import ModelService
 from sizing_logic import get_gpu_recommendation
 import json
 import os
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://gpusizer.johan.ml"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # This will use /home/models.db on Azure, or models.db locally for dev
 DB_PATH = os.environ.get("MODELS_DB_PATH", "/home/models.db")
