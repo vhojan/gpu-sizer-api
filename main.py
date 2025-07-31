@@ -6,7 +6,9 @@ import json
 from model_service import ModelService
 from sizing_logic import get_gpu_recommendation
 
-DB_PATH = os.environ.get("DB_PATH", "models.db")
+#DB_PATH = os.environ.get("DB_PATH", "models.db")
+DB_PATH = os.environ.get("MODELS_DB_PATH", "/home/models.db")
+
 MODEL_SERVICE = ModelService(DB_PATH)
 
 app = FastAPI()
