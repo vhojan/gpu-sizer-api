@@ -2,9 +2,11 @@ import sqlite3
 import json
 from transformers import AutoConfig
 from huggingface_hub import HfApi
+from huggingface_hub.utils import GatedRepoError
+from requests.exceptions import HTTPError
 import os
 
-HF_TOKEN = os.environ.get("HF_TOKEN", None)
+HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
 
 class ModelService:
     def __init__(self, db_path):
@@ -106,6 +108,30 @@ class ModelService:
             self.save_model(result)
             print(f"[DEBUG] Model fetched and saved: {model_id}")
             return result
+        except (GatedRepoError, HTTPError) as e:
+            msg = str(e)
+            if "gated repo" in msg or "restricted" in msg or "403" in msg or "401" in msg:
+                print(f"[INFO] Model {model_id} is gated/restricted on Hugging Face (GatedRepoError/HTTPError).")
+                return {
+                    "model_id": model_id,
+                    "restricted": True,
+                    "message": "This model is restricted or gated on Hugging Face. Please log in, request access, or agree to the repository terms."
+                }
+            else:
+                print(f"[ERROR] HTTP/GatedRepoError for model_id={model_id}: {e}")
+                return None
+        except OSError as e:
+            msg = str(e)
+            if "gated repo" in msg or "restricted" in msg or "403" in msg or "401" in msg:
+                print(f"[INFO] Model {model_id} is gated/restricted on Hugging Face (OSError).")
+                return {
+                    "model_id": model_id,
+                    "restricted": True,
+                    "message": "This model is restricted or gated on Hugging Face. Please log in, request access, or agree to the repository terms."
+                }
+            else:
+                print(f"[ERROR] OSError for model_id={model_id}: {e}")
+                return None
         except Exception as e:
             import traceback
             print(f"[ERROR] Failed to fetch from HF for model_id={model_id}: {e}")
