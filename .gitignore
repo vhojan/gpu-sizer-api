@@ -1,6 +1,18 @@
+# Python artifacts
 __pycache__/
-*.pyc
-.env.env
-models.db
+*.py[cod]
 *.pyo
 *.pyd
+
+# Environment files
+.venv/
+venv/
+antenv/
+.env
+.env.*
+
+# Database and cache
+models.db
+
+# macOS & system junk
+.DS_Store
