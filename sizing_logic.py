@@ -1,24 +1,35 @@
+from typing import Optional
+
+from typing import Optional
+
 def estimate_kv_cache_gb(
-    num_layers,
-    num_attention_heads,
-    hidden_size,
-    seq_len=2048,
-    dtype_bytes=2,  # FP16/BF16=2 bytes, FP32=4 bytes
-    users=1,
-):
+    *,
+    num_layers: int,
+    num_attention_heads: int,
+    hidden_size: int,
+    seq_len: int,
+    dtype_bytes: int = 2,
+    head_dim: Optional[int] = None,
+) -> Optional[float]:
     """
-    Estimate the KV cache requirement in GB.
+    Estimate KV cache size (GiB per user).
+
+    IMPORTANT:
+    - Pass **KV heads** here (i.e., num_key_value_heads if present).
+    - If head_dim is None, it is derived as hidden_size / attention_heads.
     """
-    try:
-        if not all([num_layers, num_attention_heads, hidden_size, seq_len]):
+    if not (num_layers and num_attention_heads and hidden_size and seq_len and dtype_bytes):
+        return None
+
+    if head_dim is None:
+        if num_attention_heads == 0:
             return None
         head_dim = hidden_size // num_attention_heads
-        kv_cache_bytes = num_layers * num_attention_heads * 2 * seq_len * head_dim * dtype_bytes * users
-        kv_cache_gb = kv_cache_bytes / (1024 ** 3)
-        return round(kv_cache_gb, 3)
-    except Exception as e:
-        print(f"[ERROR] KV cache estimation failed: {e}")
-        return None
+        if head_dim <= 0:
+            return None
+
+    bytes_total = num_layers * seq_len * num_attention_heads * head_dim * 2 * dtype_bytes
+    return bytes_total / (1024 ** 3)
 
 def get_effective_kv_cache(model_info, seq_len=None, dtype_bytes=2, users=1, kv_cache_override=None, force_recalc_kv=False):
     """

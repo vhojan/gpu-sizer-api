@@ -142,19 +142,26 @@ class ModelService:
                 found = True
         if not found:
             # Use GQA/MQA KV heads when available; fallback to attention heads.
-            # This avoids the classic 4× overcount on models like Qwen3/Gemma2.
-
             seq_len = get_config_key("max_position_embeddings", default=2048)
             kv_heads = get_config_key("num_key_value_heads") or result["num_attention_heads"]
+
+            # Derive head_dim if not explicitly provided
+            head_dim = get_config_key("head_dim")
+            if not head_dim and result["hidden_size"] and result["num_attention_heads"]:
+                head_dim = int(result["hidden_size"]) // int(result["num_attention_heads"])
+
             kv_est = estimate_kv_cache_gb(
-                num_layers=result["num_hidden_layers"],
-                num_attention_heads=kv_heads,
-                hidden_size=result["hidden_size"],
-                seq_len=seq_len,
-                dtype_bytes=2
+                num_layers=int(result["num_hidden_layers"]),
+                num_attention_heads=int(kv_heads),        # ← pass KV heads here
+                hidden_size=int(result["hidden_size"]),
+                seq_len=int(seq_len),
+                dtype_bytes=2,
+                head_dim=int(head_dim) if head_dim is not None else None,
             )
+
             result["kv_cache_fp16_gb"] = kv_est
-            result["missing_kv_cache"] = True if kv_est is None else False
+            result["missing_kv_cache"] = kv_est is None
+            
         return result
 
 
