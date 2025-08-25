@@ -1,6 +1,115 @@
-from typing import Optional
+# sizing_logic.py
+import os
+import json
+import math
+from typing import Optional, Union, Dict, Any
 
-from typing import Optional
+Cfg = Union[dict, str]
+
+def estimate_weights_gib(cfg_or_json: Cfg, overhead_frac: float = 0.10) -> Optional[float]:
+    """
+    Estimate VRAM for model weights (GiB).
+
+    - Assumes bf16/fp16 unless torch_dtype explicitly says fp32.
+    - Reads from both root and text_config; supports common alt names.
+    - Handles MoE: if num_experts present, counts expert MLP params.
+      By default we assume **all experts are resident** on the GPU.
+      Set env MOE_LOAD_ALL_EXPERTS="0" to scale by num_experts_per_tok instead.
+
+    Returns None if required keys are unavailable.
+    """
+
+    # Parse config input
+    if isinstance(cfg_or_json, str):
+        try:
+            cfg: Dict[str, Any] = json.loads(cfg_or_json)
+        except Exception:
+            return None
+    elif isinstance(cfg_or_json, dict):
+        cfg = cfg_or_json
+    else:
+        return None
+
+    txt = cfg.get("text_config", {}) or {}
+
+    def _get(key, *alts):
+        # prefer text_config, then root
+        for src in (txt, cfg):
+            if key in src:
+                return src[key]
+            for a in alts:
+                if a in src:
+                    return src[a]
+        return None
+
+    def _num(x):
+        try:
+            n = float(x)
+            return n if math.isfinite(n) else None
+        except Exception:
+            return None
+
+    # Core sizes
+    d = _num(_get("hidden_size", "n_embd", "d_model"))
+    L = _num(_get("num_hidden_layers", "num_layers", "n_layer"))
+    # Vocab: some configs omit it; default to a reasonable 256k
+    v = _num(_get("vocab_size", "vocab_sz"))
+    if v is None:
+        v = 256000.0
+
+    # MLP widths
+    i = _num(_get("intermediate_size", "ffn_hidden_size", "mlp_dim")) or 0.0
+
+    if not (d and L and v):
+        return None
+
+    # dtype → bytes per param
+    dtype = str(_get("torch_dtype")).lower()
+    bpp = 4 if ("float32" in dtype or "fp32" in dtype) else 2  # default bf16/fp16
+
+    # ---- Dense (non‑MoE) baseline formulas ----
+    # 1) per-layer + MLP + embeddings
+    per_layer_mlp = L * (4 * d * d + 3 * d * i) + v * d
+    # 2) LLaMA-ish scaling (attn-heavy)
+    llama_like    = 12 * d * d * L + v * d
+    dense_params  = max(per_layer_mlp, llama_like)
+
+    # ---- MoE awareness ----
+    num_experts          = _num(_get("num_experts"))
+    num_experts_per_tok  = _num(_get("num_experts_per_tok", "top_k", "k")) or 0.0
+    moe_intermediate     = _num(_get("moe_intermediate_size")) or 0.0
+    shared_mlp_i         = _num(_get("shared_expert_intermediate_size")) or 0.0
+
+    is_moe = bool(num_experts and num_experts > 0)
+
+    if not is_moe:
+        total_params = dense_params
+    else:
+        # Attention params (still dense)
+        attn_params = L * (4 * d * d)
+
+        # Shared (non-expert) MLP, if present
+        shared_params = L * (3 * d * shared_mlp_i) if shared_mlp_i > 0 else 0.0
+
+        # Expert MLP params per expert per layer: roughly 3 * d * moe_intermediate
+        expert_mlp_per_expert = 3 * d * (moe_intermediate if moe_intermediate > 0 else i)
+
+        load_all = os.getenv("MOE_LOAD_ALL_EXPERTS", "1") not in ("0", "false", "False")
+        if load_all or not num_experts_per_tok:
+            # safer: assume all experts need to be resident on one GPU
+            expert_params = L * (num_experts * expert_mlp_per_expert)
+        else:
+            # lighter: only active experts per token resident
+            expert_params = L * (num_experts_per_tok * expert_mlp_per_expert)
+
+        total_params = attn_params + shared_params + expert_params + v * d
+
+        # If MoE estimate is still suspiciously *smaller* than dense baseline,
+        # fall back to dense (avoid undercounting).
+        total_params = max(total_params, dense_params)
+
+    gib = (total_params * bpp * (1.0 + overhead_frac)) / (1024 ** 3)
+    return round(gib, 2)
 
 def estimate_kv_cache_gb(
     *,
