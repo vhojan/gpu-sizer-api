@@ -4,6 +4,7 @@ import requests
 from huggingface_hub import hf_hub_download
 import os
 import traceback
+from datetime import datetime, timezone
 
 from sizing_logic import estimate_kv_cache_gb, estimate_weights_gib
 
@@ -45,6 +46,44 @@ class ModelService:
 
             conn.commit()
 
+    @staticmethod
+    def _iso_utc_now():
+        # Compact ISO8601 (UTC), no micros → e.g., "2025-09-01T11:22:33+00:00"
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+    def _touch_model(self, model_id: str, missing_kv_cache: bool | None = None):
+        """
+        Increment query_count and set last_accessed_at for model_id.
+        If missing_kv_cache is provided, update it too.
+        """
+        ts = self._iso_utc_now()
+        with sqlite3.connect(self.db_path) as conn:
+            c = conn.cursor()
+            if missing_kv_cache is None:
+                c.execute(
+                    """
+                    INSERT INTO models (model_id, query_count, last_accessed_at)
+                    VALUES (?, 1, ?)
+                    ON CONFLICT(model_id) DO UPDATE SET
+                        query_count       = COALESCE(models.query_count, 0) + 1,
+                        last_accessed_at  = excluded.last_accessed_at
+                    """,
+                    (model_id, ts),
+                )
+            else:
+                c.execute(
+                    """
+                    INSERT INTO models (model_id, query_count, last_accessed_at, missing_kv_cache)
+                    VALUES (?, 1, ?, ?)
+                    ON CONFLICT(model_id) DO UPDATE SET
+                        query_count       = COALESCE(models.query_count, 0) + 1,
+                        last_accessed_at  = excluded.last_accessed_at,
+                        missing_kv_cache  = excluded.missing_kv_cache
+                    """,
+                    (model_id, ts, int(bool(missing_kv_cache))),
+                )
+            conn.commit()
+
     def list_models(self):
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
@@ -80,8 +119,6 @@ class ModelService:
                 except Exception as e:
                     print(f"[WARN] backfill weights_vram failed: {e}")
 
-            # (Optional) If kv missing you could recompute here too; for now we keep your current behavior.
-
             if changed:
                 try:
                     self.save_model(result)
@@ -93,6 +130,13 @@ class ModelService:
                 print(f"[WARNING] Found in DB, but missing KV cache: {model_id}")
             else:
                 print(f"[DEBUG] Found in DB: {model_id}")
+
+            # NEW: mark as accessed
+            try:
+                self._touch_model(model_id, result.get("missing_kv_cache"))
+            except Exception as e:
+                print(f"[WARN] touch_model failed for cached row {model_id}: {e}")
+
             return result   # return cached row (possibly backfilled)
 
         # Only fetch if not in DB or force_recalc_kv!
@@ -107,12 +151,23 @@ class ModelService:
             print(f"[DEBUG] Extracted config: {result}")
             self.save_model(result)
             print(f"[DEBUG] Saved model to DB: {model_id}")
+
+            # NEW: mark as accessed
+            try:
+                self._touch_model(model_id, result.get("missing_kv_cache"))
+            except Exception as e:
+                print(f"[WARN] touch_model failed for fresh row {model_id}: {e}")
+
             return result
         except Exception as e:
             print(f"[ERROR] Failed to fetch from HF for model_id={model_id}: {e}")
             traceback.print_exc()
             if result:
                 print(f"[WARNING] Returning possibly incomplete DB row for {model_id}")
+                try:
+                    self._touch_model(model_id, result.get("missing_kv_cache"))
+                except Exception as e2:
+                    print(f"[WARN] touch_model failed in exception path for {model_id}: {e2}")
                 return result
             print(f"[ERROR] No data for {model_id}, returning None")
             return None
@@ -171,7 +226,6 @@ class ModelService:
 
         # --- Weights VRAM (bf16/fp16) from config ---
         try:
-            # estimate_weights_gib accepts dict or JSON string; try dict first
             w_gib = estimate_weights_gib(config)
             if w_gib is not None:
                 result["minimal_gpu_memory_gb"] = float(w_gib)
@@ -192,7 +246,6 @@ class ModelService:
                 found = True
 
         if not found:
-            # Robust sequence length lookup (fallback to 2048)
             seq_len = (
                 get_config_key("max_position_embeddings")
                 or get_config_key("seq_length")
@@ -204,10 +257,8 @@ class ModelService:
             except Exception:
                 seq_len = 2048
 
-            # Use GQA/MQA KV heads when available; fallback to attention heads.
             kv_heads = get_config_key("num_key_value_heads") or result["num_attention_heads"]
 
-            # Derive head_dim if not explicitly provided
             head_dim = get_config_key("head_dim")
             if not head_dim and result["hidden_size"] and result["num_attention_heads"]:
                 try:
@@ -217,7 +268,7 @@ class ModelService:
 
             kv_est = estimate_kv_cache_gb(
                 num_layers=int(result["num_hidden_layers"]),
-                num_attention_heads=int(kv_heads),        # pass KV heads here
+                num_attention_heads=int(kv_heads),
                 hidden_size=int(result["hidden_size"]),
                 seq_len=seq_len,
                 dtype_bytes=2,
